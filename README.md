@@ -103,6 +103,15 @@ sudo firewall-cmd --reload
 # Instalare dependențe Python (niciunele externe - stdlib only)
 python3 --version  # Necesită Python 3.6+
 
+# Cu parser = "gaia" in config.toml:
+python3 tester.py --mode fast_scan --format gaia
+
+# Cu parser = "cef" in config.toml:
+python3 tester.py --mode fast_scan --format cef
+
+# Verificare ca CEF Allow nu declanseaza alerta:
+python3 tester.py --mode cef_normal
+
 # Test Fast Scan (default) - trimite 20 porturi în <2 secunde
 python3 tester.py --mode fast_scan
 
