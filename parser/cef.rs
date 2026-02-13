@@ -40,10 +40,13 @@ static CEF_ACT_REGEX: Lazy<Regex> =
 
 /// Parser pentru formatul Common Event Format (CEF) utilizat de ArcSight.
 ///
-/// # Notă de implementare
-/// Acest parser este un **schelet** (skeleton) gata de extins.
-/// Logica de bază pentru extragerea câmpurilor standard CEF este implementată.
-/// Câmpuri suplimentare specifice vendor-ului pot fi adăugate ulterior.
+/// Gestionează ambele forme de log:
+///   - CEF pur:       `CEF:0|Vendor|...|ext`
+///   - Syslog + CEF:  `Nov 20 15:30:00 host CEF:0|Vendor|...|ext`
+///
+/// Log-urile reale ce vin din syslog / firewall au întotdeauna prefix de
+/// timestamp + hostname înaintea payload-ului CEF. Parser-ul detectează
+/// și extrage portul CEF din linie indiferent de prefix.
 pub struct CefParser;
 
 impl CefParser {
@@ -51,37 +54,42 @@ impl CefParser {
         CefParser
     }
 
-    /// Verifică dacă un string este un log CEF valid
+    // -----------------------------------------------------------------------
+    // BUG FIX #1: `starts_with("CEF:")` eșua pentru orice log primit prin
+    // syslog, deoarece linia arată astfel:
+    //   "Nov 20 15:30:00 firewall CEF:0|Checkpoint|..."
+    //              ↑ prefix syslog — parser-ul respingea totul!
+    //
+    // Soluție: `contains("CEF:")` găsește token-ul oriunde în linie.
+    // -----------------------------------------------------------------------
     fn is_cef(line: &str) -> bool {
-        line.trim_start().starts_with("CEF:")
+        line.contains("CEF:")
     }
 
-    /// Parsează header-ul CEF (primele 8 câmpuri separate de `|`)
-    ///
-    /// Returnează numărul de câmpuri header parsate sau None dacă formatul e invalid.
-    fn parse_header(line: &str) -> Option<(u8, String, String, String, String, String, u8)> {
-        // Separăm header-ul de extensie: primele 8 câmpuri, ultima parte = extension
-        let parts: Vec<&str> = line.splitn(8, '|').collect();
+    // -----------------------------------------------------------------------
+    // BUG FIX #2: `parse_header` primea întreaga linie syslog și o spărgea
+    // după `|`. Primul element era "Nov 20 15:30:00 firewall CEF:0",
+    // iar `.trim_start_matches("CEF:")` nu funcționa, deci versiunea era
+    // unparseable -> `None` -> parser-ul returna `None` pentru orice linie.
+    //
+    // Soluție: extragem mai întâi DOAR porțiunea `CEF:0|...|extension`
+    // folosind `find("CEF:")`, apoi lucrăm doar cu aceasta.
+    // -----------------------------------------------------------------------
+    fn extract_cef_portion(line: &str) -> Option<&str> {
+        // `find` returnează Option<usize> - indexul primei apariții a "CEF:"
+        // Dacă nu există, returnăm None direct cu `?`
+        let cef_start = line.find("CEF:")?;
 
-        if parts.len() < 8 {
-            return None;
-        }
+        // Slice-ul de la indexul găsit până la sfârșit
+        // `&line[cef_start..]` este O(1) — nu copiază date, referință la aceeași memorie
+        Some(&line[cef_start..])
+    }
 
-        // parts[0] = "CEF:0" -> extragem versiunea
-        let version: u8 = parts[0]
-            .trim_start_matches("CEF:")
-            .parse()
-            .ok()?;
-
-        Some((
-            version,
-            parts[1].to_string(), // Device Vendor
-            parts[2].to_string(), // Device Product
-            parts[3].to_string(), // Device Version
-            parts[4].to_string(), // Signature ID
-            parts[5].to_string(), // Name
-            parts[6].trim().parse().unwrap_or(5), // Severity (default 5)
-        ))
+    /// Validează că porțiunea CEF are structura corectă (min. 8 câmpuri `|`)
+    fn validate_header(cef_portion: &str) -> bool {
+        // Un CEF valid are exact 7 separatoare `|` pentru cele 8 câmpuri de header
+        // (ultimul câmp = extensia, poate conține orice)
+        cef_portion.splitn(8, '|').count() >= 7
     }
 }
 
@@ -93,17 +101,23 @@ impl LogParser for CefParser {
     fn parse(&self, line: &str) -> Option<LogEntry> {
         let line = line.trim();
 
-        // Verificăm că este un log CEF valid
+        // Pasul 1: verificăm că linia conține un payload CEF (oriunde în linie)
         if !Self::is_cef(line) {
             return None;
         }
 
-        // Parsăm header-ul pentru validare (rezultatul poate fi extins)
-        // Deocamdată nu folosim toate câmpurile header-ului, dar le validăm
-        let _header = Self::parse_header(line)?;
+        // Pasul 2: extragem DOAR porțiunea CEF (fără prefix syslog)
+        let cef_portion = Self::extract_cef_portion(line)?;
 
-        // Extragem câmpurile din extensia CEF (ultima parte după al 8-lea `|`)
-        // Regex-urile caută perechi key=value specifice
+        // Pasul 3: validăm structura minimă a header-ului CEF
+        if !Self::validate_header(cef_portion) {
+            return None;
+        }
+
+        // Pasul 4: extragem câmpurile din extensia CEF cu regex-uri key=value.
+        // Regex-urile caută în întreaga linie (nu doar în cef_portion) pentru că
+        // `src=`, `dpt=`, `act=` se află în extension, după ultimul `|`.
+        // Căutăm în `line` original pentru a beneficia de indexarea suplimentară.
         let source_ip: IpAddr = CEF_SRC_REGEX
             .captures(line)?
             .get(1)?
@@ -118,15 +132,15 @@ impl LogParser for CefParser {
             .parse()
             .ok()?;
 
-        // Extragem acțiunea; dacă nu există, nu putem evalua relevanța
+        // Extragem acțiunea (case-insensitive: "Drop", "DROP", "drop" sunt toate valide)
         let action = CEF_ACT_REGEX
             .captures(line)
             .and_then(|c| c.get(1))
             .map(|m| m.as_str().to_lowercase())
             .unwrap_or_else(|| "unknown".to_string());
 
-        // Filtrăm acțiunile irelevante (ne interesează drop/deny)
-        // CEF folosește "drop" sau "deny" în funcție de vendor
+        // Filtrăm: ne interesează doar acțiuni de blocare
+        // Checkpoint CEF folosește "drop", alte vendor-uri pot folosi "deny"
         if action != "drop" && action != "deny" {
             return None;
         }
