@@ -1,0 +1,53 @@
+[package]
+name = "rust-ids"
+version = "0.1.0"
+edition = "2021"
+authors = ["IDS Project"]
+description = "Intrusion Detection System - Network Scan Detector"
+
+# --- Dependențe externe (crate-uri) ---
+[dependencies]
+
+# Runtime asincron - tokio oferă un multi-threaded async executor
+# "full" activează toate feature-urile: net, time, sync, fs, etc.
+tokio = { version = "1", features = ["full"] }
+
+# Serializare/Deserializare - serde este standardul în Rust
+# "derive" permite generarea automată de cod cu #[derive(Serialize, Deserialize)]
+serde = { version = "1", features = ["derive"] }
+
+# Parser pentru formatul TOML al fișierului de configurare
+toml = "0.8"
+
+# Structuri de date concurente fără lock global - mult mai performant decât Mutex<HashMap>
+# DashMap oferă acces concurrent granular (lock per "shard")
+dashmap = "6"
+
+# Framework de tracing/logging structurat
+tracing = "0.1"
+
+# Subscriber (consumatorul) pentru mesajele de tracing
+# "env-filter" permite filtrarea nivelurilor cu var. de mediu RUST_LOG
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
+
+# Colorare text în terminal prin coduri ANSI - simplu și elegant
+colored = "2"
+
+# Gestionarea datelor și timpului - necesară pentru timestamps în loguri
+chrono = { version = "0.4", features = ["serde"] }
+
+# Client SMTP async pentru trimiterea email-urilor de alertă
+# "tokio1"           = integrare cu tokio runtime
+# "tokio1-native-tls" = suport TLS via OpenSSL (disponibil pe RHEL 9.6)
+# "builder"          = API ergonomic de construire email
+# Pe sisteme fără OpenSSL, înlocuiți "tokio1-native-tls" cu "tokio1-rustls-tls"
+lettre = { version = "0.11", features = ["tokio1", "tokio1-native-tls", "builder"] }
+
+# Expresii regulate (regex) pentru parsarea log-urilor
+regex = "1"
+
+# Gestionare ergonomică a erorilor - propagare cu ? și contexte clare
+anyhow = "1"
+
+# Lazy initialization pentru variabile statice (ex: Regex compilat o singură dată)
+once_cell = "1"

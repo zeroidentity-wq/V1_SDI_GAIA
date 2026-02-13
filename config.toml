@@ -1,0 +1,48 @@
+# ============================================================
+#  Rust IDS - Fișier de Configurare
+#  Modificați valorile de mai jos fără a recompila proiectul.
+# ============================================================
+
+[listener]
+# Adresa pe care IDS-ul ascultă pachete UDP cu log-uri de firewall
+bind_address = "0.0.0.0"
+port         = 5555
+
+# Tipul de parser activ: "gaia" (Checkpoint Gaia Raw) sau "cef" (ArcSight CEF)
+parser = "gaia"
+
+
+[detection]
+# --- Fast Scan ---
+# Alertă dacă un IP accesează mai mult de X porturi unice în Y secunde
+fast_scan_ports       = 15   # X: număr porturi unice
+fast_scan_window_secs = 10   # Y: fereastra de timp (secunde)
+
+# --- Slow Scan ---
+# Alertă dacă un IP accesează mai mult de Z porturi unice în W minute
+slow_scan_ports       = 30   # Z: număr porturi unice
+slow_scan_window_mins = 60   # W: fereastra de timp (minute)
+
+# Cât de des (secunde) se curăță starea internă pentru IP-uri vechi
+cleanup_interval_secs = 300
+
+# Cooldown (secunde) între două alerte pentru același IP (anti-spam)
+alert_cooldown_secs = 60
+
+
+[siem]
+# Destinație UDP pentru alertele trimise către SIEM ArcSight
+address = "127.0.0.1"
+port    = 514
+
+
+[email]
+# Server SMTP pentru trimiterea alertelor prin email
+smtp_server = "smtp.company.internal"
+smtp_port   = 587
+username    = "ids-noreply@company.com"
+password    = "CHANGE_ME_IN_PRODUCTION"
+from        = "IDS Alerts <ids-noreply@company.com>"
+to          = "security-team@company.com"
+# Activează/dezactivează trimiterea email-urilor (util pentru testare)
+enabled     = false
